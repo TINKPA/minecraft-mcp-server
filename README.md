@@ -29,6 +29,31 @@ Create a singleplayer world and open it to LAN (`ESC -> Open to LAN`). Bot will 
 
 Make sure that [Claude Desktop](https://claude.ai/download) is installed. Open `File -> Settings -> Developer -> Edit Config`. It should open installation directory. Find file with a name `claude_desktop_config.json` and insert the following code:
 
+#### For Local Development
+
+```json
+{
+  "mcpServers": {
+    "minecraft": {
+      "command": "node",
+      "args": [
+        "/Volumes/Samsung Portable SSD T5/danieltangX/Developer/minecraft-mcp-server/dist/bot.js",
+        "--host",
+        "localhost",
+        "--port",
+        "25565",
+        "--username",
+        "ClaudeBot"
+      ]
+    }
+  }
+}
+```
+
+**Note:** Make sure to run `npm run build` first to compile the TypeScript code to the `dist` directory.
+
+#### For NPM Package
+
 ```json
 {
   "mcpServers": {
@@ -91,6 +116,11 @@ Once connected to a Minecraft server, Claude can use these commands:
 - `dig-block` - Dig a block at specified coordinates
 - `get-block-info` - Get information about a block
 - `find-block` - Find the nearest block of a specific type
+
+### Observation
+- `get-blocks-in-area` - Get all blocks within a 3D rectangular area defined by two corner positions
+- `get-blocks-in-radius` - Get all blocks within a spherical radius from a center point
+- `scan-layers` - Scan horizontal layers at specific Y levels to find blocks
 
 ### Entity Interaction
 - `find-entity` - Find the nearest entity of a specific type

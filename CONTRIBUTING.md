@@ -62,7 +62,7 @@ Update your MCP configuration to use your fork and branch:
       "command": "npx",
       "args": [
         "-y",
-        "github:YOUR_USERNAME/minecraft-mcp-server#your-feature-branch-name",
+        "github:TINKPA/minecraft-mcp-server",
         "--host",
         "localhost",
         "--port",

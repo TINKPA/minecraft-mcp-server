@@ -196,6 +196,7 @@ function createMcpServer(bot: mineflayer.Bot) {
   registerEntityTools(server, bot);
   registerChatTools(server, bot);
   registerFlightTools(server, bot);
+  registerObservationTools(server, bot);
   registerGameStateTools(server, bot);
 
   return server;
@@ -704,6 +705,217 @@ function createCancellableFlightOperation(
         }
       });
   });
+}
+
+// ========== Helper Functions for Block Data ==========
+
+interface BlockSummary {
+  type: string;
+  count: number;
+  positions: Vec3[];
+}
+
+function formatBlockList(blocks: Map<string, Vec3[]>, maxPositions: number = 3): string {
+  const summaries: BlockSummary[] = [];
+
+  blocks.forEach((positions, blockType) => {
+    summaries.push({
+      type: blockType,
+      count: positions.length,
+      positions: positions.slice(0, maxPositions)
+    });
+  });
+
+  // Sort by count (most common first)
+  summaries.sort((a, b) => b.count - a.count);
+
+  let output = `Found ${summaries.length} different block types:\n\n`;
+
+  summaries.forEach(summary => {
+    output += `- ${summary.type}: ${summary.count} blocks\n`;
+    if (summary.count <= maxPositions) {
+      summary.positions.forEach(pos => {
+        output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+      });
+    } else {
+      summary.positions.forEach(pos => {
+        output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+      });
+      output += `  ... and ${summary.count - maxPositions} more\n`;
+    }
+  });
+
+  return output;
+}
+
+// ========== Observation Tools ==========
+
+function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
+  server.tool(
+    "get-blocks-in-area",
+    "Get all blocks within a 3D rectangular area defined by two corner positions",
+    {
+      x1: z.number().describe("First corner X coordinate"),
+      y1: z.number().describe("First corner Y coordinate"),
+      z1: z.number().describe("First corner Z coordinate"),
+      x2: z.number().describe("Second corner X coordinate"),
+      y2: z.number().describe("Second corner Y coordinate"),
+      z2: z.number().describe("Second corner Z coordinate"),
+      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+    },
+    async ({ x1, y1, z1, x2, y2, z2, filterType }): Promise<McpResponse> => {
+      try {
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+        const minZ = Math.min(z1, z2);
+        const maxZ = Math.max(z1, z2);
+
+        const volumeSize = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+        const MAX_VOLUME = 10000;
+
+        if (volumeSize > MAX_VOLUME) {
+          return createResponse(`Area too large (${volumeSize} blocks). Maximum allowed: ${MAX_VOLUME} blocks.`);
+        }
+
+        const blockMap = new Map<string, Vec3[]>();
+
+        for (let x = minX; x <= maxX; x++) {
+          for (let y = minY; y <= maxY; y++) {
+            for (let z = minZ; z <= maxZ; z++) {
+              const block = bot.blockAt(new Vec3(x, y, z));
+              if (!block) continue;
+
+              if (filterType && block.name !== filterType) continue;
+
+              if (!blockMap.has(block.name)) {
+                blockMap.set(block.name, []);
+              }
+              blockMap.get(block.name)!.push(new Vec3(x, y, z));
+            }
+          }
+        }
+
+        if (blockMap.size === 0) {
+          return createResponse(filterType
+            ? `No blocks of type '${filterType}' found in the area`
+            : "No blocks found in the area");
+        }
+
+        const output = formatBlockList(blockMap);
+        return createResponse(output);
+      } catch (error) {
+        return createErrorResponse(error as Error);
+      }
+    }
+  );
+
+  server.tool(
+    "get-blocks-in-radius",
+    "Get all blocks within a spherical radius from a center point",
+    {
+      x: z.number().describe("Center X coordinate"),
+      y: z.number().describe("Center Y coordinate"),
+      z: z.number().describe("Center Z coordinate"),
+      radius: z.number().describe("Search radius"),
+      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+    },
+    async ({ x, y, z, radius, filterType }): Promise<McpResponse> => {
+      try {
+        const MAX_RADIUS = 32;
+        if (radius > MAX_RADIUS) {
+          return createResponse(`Radius too large (${radius}). Maximum allowed: ${MAX_RADIUS} blocks.`);
+        }
+
+        const center = new Vec3(x, y, z);
+        const blockMap = new Map<string, Vec3[]>();
+
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dy = -radius; dy <= radius; dy++) {
+            for (let dz = -radius; dz <= radius; dz++) {
+              const pos = new Vec3(x + dx, y + dy, z + dz);
+              const distance = pos.distanceTo(center);
+
+              if (distance > radius) continue;
+
+              const block = bot.blockAt(pos);
+              if (!block) continue;
+
+              if (filterType && block.name !== filterType) continue;
+
+              if (!blockMap.has(block.name)) {
+                blockMap.set(block.name, []);
+              }
+              blockMap.get(block.name)!.push(pos);
+            }
+          }
+        }
+
+        if (blockMap.size === 0) {
+          return createResponse(filterType
+            ? `No blocks of type '${filterType}' found within radius ${radius}`
+            : `No blocks found within radius ${radius}`);
+        }
+
+        const output = formatBlockList(blockMap);
+        return createResponse(output);
+      } catch (error) {
+        return createErrorResponse(error as Error);
+      }
+    }
+  );
+
+  server.tool(
+    "scan-layers",
+    "Scan horizontal layers at specific Y levels to find blocks",
+    {
+      centerX: z.number().describe("Center X coordinate"),
+      centerZ: z.number().describe("Center Z coordinate"),
+      yLevel: z.number().describe("Y level to scan"),
+      radius: z.number().describe("Horizontal radius to scan"),
+      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+    },
+    async ({ centerX, centerZ, yLevel, radius, filterType }): Promise<McpResponse> => {
+      try {
+        const MAX_RADIUS = 32;
+        if (radius > MAX_RADIUS) {
+          return createResponse(`Radius too large (${radius}). Maximum allowed: ${MAX_RADIUS} blocks.`);
+        }
+
+        const blockMap = new Map<string, Vec3[]>();
+
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) {
+            const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+            if (horizontalDist > radius) continue;
+
+            const pos = new Vec3(centerX + dx, yLevel, centerZ + dz);
+            const block = bot.blockAt(pos);
+            if (!block) continue;
+
+            if (filterType && block.name !== filterType) continue;
+
+            if (!blockMap.has(block.name)) {
+              blockMap.set(block.name, []);
+            }
+            blockMap.get(block.name)!.push(pos);
+          }
+        }
+
+        if (blockMap.size === 0) {
+          return createResponse(filterType
+            ? `No blocks of type '${filterType}' found at Y level ${yLevel}`
+            : `No blocks found at Y level ${yLevel}`);
+        }
+
+        const output = formatBlockList(blockMap);
+        return createResponse(output);
+      } catch (error) {
+        return createErrorResponse(error as Error);
+      }
+    }
+  );
 }
 
 // ========== Game State Tools ============
