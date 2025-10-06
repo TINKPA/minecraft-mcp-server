@@ -1,5 +1,5 @@
-# Dist folder
-dist/
+# Dist folder - keeping for npx installation
+# dist/
 
 # Node.js dependencies
 node_modules/
