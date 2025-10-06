@@ -118,9 +118,10 @@ Once connected to a Minecraft server, Claude can use these commands:
 - `find-block` - Find the nearest block of a specific type
 
 ### Observation
-- `get-blocks-in-area` - Get all blocks within a 3D rectangular area defined by two corner positions
-- `get-blocks-in-radius` - Get all blocks within a spherical radius from a center point
-- `scan-layers` - Scan horizontal layers at specific Y levels to find blocks
+- `get-block-at` - Get detailed information about a single block at specific coordinates with all properties
+- `get-blocks-in-area` - Get all blocks within a 3D rectangular area defined by two corner positions with detailed properties
+- `get-blocks-in-radius` - Get all blocks within a spherical radius from a center point with detailed properties
+- `scan-layers` - Scan horizontal layers at specific Y levels to find blocks with detailed properties
 
 ### Entity Interaction
 - `find-entity` - Find the nearest entity of a specific type
@@ -132,6 +133,147 @@ Once connected to a Minecraft server, Claude can use these commands:
 ### Game State
 - `detect-gamemode` - Detect the gamemode on game
 
+## Developer Setup
+
+### Prerequisites for Development
+
+- Node.js (>=16.0.0)
+- npm or yarn
+- TypeScript knowledge
+- Git
+
+### Building the Project
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/TINKPA/minecraft-mcp-server.git
+   cd minecraft-mcp-server
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Build the TypeScript code:**
+   ```bash
+   npm run build
+   ```
+   This compiles the TypeScript source code in `src/` to JavaScript in `dist/`.
+
+4. **Make the binary executable:**
+   ```bash
+   chmod +x dist/bot.js
+   ```
+
+5. **Test the build:**
+   ```bash
+   node dist/bot.js --help
+   ```
+
+### Development Workflow
+
+1. **Make changes** to TypeScript files in the `src/` directory
+2. **Build the project** with `npm run build`
+3. **Test your changes** by running the MCP server locally
+4. **Commit and push** your changes
+
+### Project Structure
+
+```
+minecraft-mcp-server/
+├── src/
+│   ├── bot.ts              # Main MCP server implementation
+│   └── types.d.ts          # TypeScript type definitions
+├── dist/                   # Compiled JavaScript (auto-generated)
+│   └── bot.js              # Main executable file
+├── package.json            # Project configuration and dependencies
+├── tsconfig.json           # TypeScript configuration
+├── eslint.config.mjs       # ESLint configuration
+└── README.md               # This file
+```
+
+### Available Scripts
+
+- `npm run build` - Compile TypeScript to JavaScript
+- `npm run start` - Run the compiled bot.js
+- `npm run lint` - Check code for linting issues
+- `npm run lint:fix` - Automatically fix linting issues
+
+### Key Features for Developers
+
+#### Enhanced Observation Tools
+
+The project includes comprehensive block observation tools that integrate with mineflayer's `blockAt` function:
+
+- **`get-block-at`** - Get detailed information about a single block
+- **`get-blocks-in-area`** - Scan rectangular areas with detailed properties
+- **`get-blocks-in-radius`** - Find blocks within spherical radius
+- **`scan-layers`** - Scan horizontal layers at specific Y levels
+
+#### Block Properties Extracted
+
+The `getBlockProperties()` helper function extracts:
+- Basic properties (name, type, position, material)
+- Block data (state properties like lit, powered, open)
+- Block entity data (signs, chests, etc.)
+- Active status indicators (LIT, POWERED, OPEN, EXTENDED, etc.)
+- Harvest tools and biome information
+
+#### Adding New Tools
+
+To add a new MCP tool:
+
+1. **Add the tool registration** in the appropriate section of `src/bot.ts`
+2. **Define the schema** using Zod for parameter validation
+3. **Implement the handler** function with proper error handling
+4. **Test the tool** with various parameters
+5. **Update documentation** in this README
+
+Example tool structure:
+```typescript
+server.tool(
+  "your-tool-name",
+  "Description of what the tool does",
+  {
+    param1: z.string().describe("Parameter description"),
+    param2: z.number().optional().describe("Optional parameter")
+  },
+  async ({ param1, param2 }): Promise<McpResponse> => {
+    try {
+      // Your implementation here
+      return createResponse("Success message");
+    } catch (error) {
+      return createErrorResponse(error as Error);
+    }
+  }
+);
+```
+
+### Important Notes for Contributors
+
+1. **Always build before committing** - The `dist/bot.js` file must be included for npx installation
+2. **Keep dist/ in repository** - Unlike typical projects, this needs the built files for GitHub installation
+3. **Test with MCP clients** - Ensure your changes work with Claude Desktop and other MCP clients
+4. **Follow existing patterns** - Use the same error handling and response patterns as existing tools
+5. **Update documentation** - Add new tools to the "Available Commands" section
+
+### Troubleshooting
+
+#### Build Issues
+- Ensure all dependencies are installed: `npm install`
+- Check TypeScript compilation: `npm run build`
+- Verify file permissions: `chmod +x dist/bot.js`
+
+#### MCP Connection Issues
+- Check that the built `dist/bot.js` file exists and is executable
+- Verify the correct path in your MCP configuration
+- Ensure Minecraft server is running and accessible
+
+#### Permission Denied Errors
+- Make sure `dist/bot.js` has execute permissions: `chmod +x dist/bot.js`
+- Verify the file was built correctly: `node dist/bot.js --help`
+
 ## Contributing
 
 This application was made in just two days, and the code is really simple and straightforward. All refactoring commits, functional and test contributions, issues and discussion are greatly appreciated!
@@ -142,5 +284,14 @@ Feel free to submit pull requests or open issues for improvements. Some areas th
 - More robust error handling
 - Tests for different components
 - New functionality and commands
+- Performance optimizations
+- Better TypeScript type definitions
+
+### Before Submitting
+
+1. **Build the project** and ensure it works
+2. **Test your changes** with a real Minecraft server
+3. **Update documentation** if you add new features
+4. **Follow the existing code style** and patterns
 
 To get started with contributing, please see [CONTRIBUTING.md](CONTRIBUTING.md).
