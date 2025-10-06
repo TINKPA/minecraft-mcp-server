@@ -545,10 +545,93 @@ function createCancellableFlightOperation(
 
 // ========== Observation Tools ==========
 
+// Helper function to extract all block properties
+function getBlockProperties(block: any): string {
+  const properties = [];
+  
+  // Basic properties
+  properties.push(`Name: ${block.name || 'unknown'}`);
+  properties.push(`Type ID: ${block.type || 'unknown'}`);
+  properties.push(`Position: (${block.position.x}, ${block.position.y}, ${block.position.z})`);
+  
+  // Material and metadata
+  if (block.material) properties.push(`Material: ${block.material}`);
+  if (block.metadata !== undefined) properties.push(`Metadata: ${block.metadata}`);
+  if (block.biome) properties.push(`Biome: ${block.biome}`);
+  
+  // Block data (state properties)
+  if (block.blockData && Object.keys(block.blockData).length > 0) {
+    properties.push(`Block Data: ${JSON.stringify(block.blockData)}`);
+  }
+  
+  // Block entity data (if available)
+  if (block.blockEntity) {
+    properties.push(`Block Entity: ${JSON.stringify(block.blockEntity)}`);
+  }
+  
+  // Digging properties
+  if (block.digTime) {
+    properties.push(`Dig Time: ${block.digTime()}ms`);
+  }
+  
+  // Harvest tools
+  if (block.harvestTools && Array.isArray(block.harvestTools)) {
+    properties.push(`Harvest Tools: ${block.harvestTools.join(', ')}`);
+  }
+  
+  // Bounding box
+  if (block.boundingBox) {
+    properties.push(`Bounding Box: ${block.boundingBox}`);
+  }
+  
+  // Active status indicators
+  const activeStatus = [];
+  if (block.blockData?.lit === true) activeStatus.push('LIT');
+  if (block.blockData?.powered === true) activeStatus.push('POWERED');
+  if (block.blockData?.open === true) activeStatus.push('OPEN');
+  if (block.blockData?.extended === true) activeStatus.push('EXTENDED');
+  if (block.blockData?.triggered === true) activeStatus.push('TRIGGERED');
+  if (block.blockData?.activated === true) activeStatus.push('ACTIVATED');
+  
+  if (activeStatus.length > 0) {
+    properties.push(`Active Status: ${activeStatus.join(', ')}`);
+  }
+  
+  return properties.join('\n');
+}
+
 function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
+  // New tool: Get single block with all properties
+  server.tool(
+    "get-block-at",
+    "Get detailed information about a single block at specific coordinates using blockAt function",
+    {
+      x: z.number().describe("X coordinate"),
+      y: z.number().describe("Y coordinate"),
+      z: z.number().describe("Z coordinate"),
+      includeExtraInfo: z.boolean().optional().describe("Include extra block entity information (slower)").default(true)
+    },
+    async ({ x, y, z, includeExtraInfo }): Promise<McpResponse> => {
+      try {
+        const block = bot.blockAt(new Vec3(x, y, z), includeExtraInfo);
+        
+        if (!block) {
+          return createResponse(`No block found at coordinates (${x}, ${y}, ${z}). The block may not be loaded.`);
+        }
+        
+        const properties = getBlockProperties(block);
+        const output = `Block at (${x}, ${y}, ${z}):\n\n${properties}`;
+        
+        return createResponse(output);
+      } catch (error) {
+        return createErrorResponse(error as Error);
+      }
+    }
+  );
+
   server.tool(
     "get-blocks-in-area",
-    "Get all blocks within a 3D rectangular area defined by two corner positions",
+    "Get all blocks within a 3D rectangular area defined by two corner positions with detailed properties",
     {
       x1: z.number().describe("First corner X coordinate"),
       y1: z.number().describe("First corner Y coordinate"),
@@ -556,9 +639,11 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
       x2: z.number().describe("Second corner X coordinate"),
       y2: z.number().describe("Second corner Y coordinate"),
       z2: z.number().describe("Second corner Z coordinate"),
-      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+      filterType: z.string().optional().describe("Optional: only return blocks of this type"),
+      includeProperties: z.boolean().optional().describe("Include detailed block properties").default(false),
+      maxBlocks: z.number().optional().describe("Maximum number of blocks to return details for").default(50)
     },
-    async ({ x1, y1, z1, x2, y2, z2, filterType }): Promise<McpResponse> => {
+    async ({ x1, y1, z1, x2, y2, z2, filterType, includeProperties, maxBlocks }): Promise<McpResponse> => {
       try {
         const minX = Math.min(x1, x2);
         const maxX = Math.max(x1, x2);
@@ -574,20 +659,31 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
           return createResponse(`Area too large (${volumeSize} blocks). Maximum allowed: ${MAX_VOLUME} blocks.`);
         }
 
-        const blockMap = new Map<string, Vec3[]>();
+        const blockMap = new Map<string, any[]>();
+        const detailedBlocks: any[] = [];
 
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
             for (let z = minZ; z <= maxZ; z++) {
-              const block = bot.blockAt(new Vec3(x, y, z));
+              const block = bot.blockAt(new Vec3(x, y, z), includeProperties);
               if (!block) continue;
 
               if (filterType && block.name !== filterType) continue;
 
+              const blockInfo = {
+                position: new Vec3(x, y, z),
+                block: block
+              };
+
               if (!blockMap.has(block.name)) {
                 blockMap.set(block.name, []);
               }
-              blockMap.get(block.name)!.push(new Vec3(x, y, z));
+              blockMap.get(block.name)!.push(blockInfo);
+
+              // Collect detailed blocks if requested
+              if (includeProperties && detailedBlocks.length < maxBlocks) {
+                detailedBlocks.push(blockInfo);
+              }
             }
           }
         }
@@ -602,20 +698,31 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
         
         const sortedEntries = Array.from(blockMap.entries()).sort((a, b) => b[1].length - a[1].length);
         
-        sortedEntries.forEach(([blockType, positions]) => {
-          output += `- ${blockType}: ${positions.length} blocks\n`;
+        sortedEntries.forEach(([blockType, blockInfos]) => {
+          output += `- ${blockType}: ${blockInfos.length} blocks\n`;
           const maxPositions = 3;
-          if (positions.length <= maxPositions) {
-            positions.forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+          if (blockInfos.length <= maxPositions) {
+            blockInfos.forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z})\n`;
             });
           } else {
-            positions.slice(0, maxPositions).forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+            blockInfos.slice(0, maxPositions).forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z})\n`;
             });
-            output += `  ... and ${positions.length - maxPositions} more\n`;
+            output += `  ... and ${blockInfos.length - maxPositions} more\n`;
           }
         });
+
+        // Add detailed properties if requested
+        if (includeProperties && detailedBlocks.length > 0) {
+          output += `\n\nDetailed Properties (showing first ${detailedBlocks.length} blocks):\n`;
+          output += '='.repeat(50) + '\n';
+          
+          detailedBlocks.forEach((blockInfo, index) => {
+            output += `\nBlock ${index + 1} at (${blockInfo.position.x}, ${blockInfo.position.y}, ${blockInfo.position.z}):\n`;
+            output += getBlockProperties(blockInfo.block) + '\n';
+          });
+        }
         
         return createResponse(output);
       } catch (error) {
@@ -626,15 +733,17 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
 
   server.tool(
     "get-blocks-in-radius",
-    "Get all blocks within a spherical radius from a center point",
+    "Get all blocks within a spherical radius from a center point with detailed properties",
     {
       x: z.number().describe("Center X coordinate"),
       y: z.number().describe("Center Y coordinate"),
       z: z.number().describe("Center Z coordinate"),
       radius: z.number().describe("Search radius"),
-      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+      filterType: z.string().optional().describe("Optional: only return blocks of this type"),
+      includeProperties: z.boolean().optional().describe("Include detailed block properties").default(false),
+      maxBlocks: z.number().optional().describe("Maximum number of blocks to return details for").default(50)
     },
-    async ({ x, y, z, radius, filterType }): Promise<McpResponse> => {
+    async ({ x, y, z, radius, filterType, includeProperties, maxBlocks }): Promise<McpResponse> => {
       try {
         const MAX_RADIUS = 32;
         if (radius > MAX_RADIUS) {
@@ -642,7 +751,8 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
         }
 
         const center = new Vec3(x, y, z);
-        const blockMap = new Map<string, Vec3[]>();
+        const blockMap = new Map<string, any[]>();
+        const detailedBlocks: any[] = [];
 
         for (let dx = -radius; dx <= radius; dx++) {
           for (let dy = -radius; dy <= radius; dy++) {
@@ -652,15 +762,26 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
 
               if (distance > radius) continue;
 
-              const block = bot.blockAt(pos);
+              const block = bot.blockAt(pos, includeProperties);
               if (!block) continue;
 
               if (filterType && block.name !== filterType) continue;
 
+              const blockInfo = {
+                position: pos,
+                block: block,
+                distance: distance
+              };
+
               if (!blockMap.has(block.name)) {
                 blockMap.set(block.name, []);
               }
-              blockMap.get(block.name)!.push(pos);
+              blockMap.get(block.name)!.push(blockInfo);
+
+              // Collect detailed blocks if requested
+              if (includeProperties && detailedBlocks.length < maxBlocks) {
+                detailedBlocks.push(blockInfo);
+              }
             }
           }
         }
@@ -671,24 +792,38 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
             : `No blocks found within radius ${radius}`);
         }
 
-        let output = `Found ${blockMap.size} different block types:\n\n`;
+        let output = `Found ${blockMap.size} different block types within radius ${radius}:\n\n`;
         
         const sortedEntries = Array.from(blockMap.entries()).sort((a, b) => b[1].length - a[1].length);
         
-        sortedEntries.forEach(([blockType, positions]) => {
-          output += `- ${blockType}: ${positions.length} blocks\n`;
+        sortedEntries.forEach(([blockType, blockInfos]) => {
+          output += `- ${blockType}: ${blockInfos.length} blocks\n`;
           const maxPositions = 3;
-          if (positions.length <= maxPositions) {
-            positions.forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+          if (blockInfos.length <= maxPositions) {
+            blockInfos.forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z}) [dist: ${info.distance.toFixed(1)}]\n`;
             });
           } else {
-            positions.slice(0, maxPositions).forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+            blockInfos.slice(0, maxPositions).forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z}) [dist: ${info.distance.toFixed(1)}]\n`;
             });
-            output += `  ... and ${positions.length - maxPositions} more\n`;
+            output += `  ... and ${blockInfos.length - maxPositions} more\n`;
           }
         });
+
+        // Add detailed properties if requested
+        if (includeProperties && detailedBlocks.length > 0) {
+          output += `\n\nDetailed Properties (showing first ${detailedBlocks.length} blocks):\n`;
+          output += '='.repeat(50) + '\n';
+          
+          // Sort by distance from center
+          detailedBlocks.sort((a, b) => a.distance - b.distance);
+          
+          detailedBlocks.forEach((blockInfo, index) => {
+            output += `\nBlock ${index + 1} at (${blockInfo.position.x}, ${blockInfo.position.y}, ${blockInfo.position.z}) [distance: ${blockInfo.distance.toFixed(1)}]:\n`;
+            output += getBlockProperties(blockInfo.block) + '\n';
+          });
+        }
         
         return createResponse(output);
       } catch (error) {
@@ -699,22 +834,25 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
 
   server.tool(
     "scan-layers",
-    "Scan horizontal layers at specific Y levels to find blocks",
+    "Scan horizontal layers at specific Y levels to find blocks with detailed properties",
     {
       centerX: z.number().describe("Center X coordinate"),
       centerZ: z.number().describe("Center Z coordinate"),
       yLevel: z.number().describe("Y level to scan"),
       radius: z.number().describe("Horizontal radius to scan"),
-      filterType: z.string().optional().describe("Optional: only return blocks of this type")
+      filterType: z.string().optional().describe("Optional: only return blocks of this type"),
+      includeProperties: z.boolean().optional().describe("Include detailed block properties").default(false),
+      maxBlocks: z.number().optional().describe("Maximum number of blocks to return details for").default(50)
     },
-    async ({ centerX, centerZ, yLevel, radius, filterType }): Promise<McpResponse> => {
+    async ({ centerX, centerZ, yLevel, radius, filterType, includeProperties, maxBlocks }): Promise<McpResponse> => {
       try {
         const MAX_RADIUS = 32;
         if (radius > MAX_RADIUS) {
           return createResponse(`Radius too large (${radius}). Maximum allowed: ${MAX_RADIUS} blocks.`);
         }
 
-        const blockMap = new Map<string, Vec3[]>();
+        const blockMap = new Map<string, any[]>();
+        const detailedBlocks: any[] = [];
 
         for (let dx = -radius; dx <= radius; dx++) {
           for (let dz = -radius; dz <= radius; dz++) {
@@ -722,15 +860,26 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
             if (horizontalDist > radius) continue;
 
             const pos = new Vec3(centerX + dx, yLevel, centerZ + dz);
-            const block = bot.blockAt(pos);
+            const block = bot.blockAt(pos, includeProperties);
             if (!block) continue;
 
             if (filterType && block.name !== filterType) continue;
 
+            const blockInfo = {
+              position: pos,
+              block: block,
+              horizontalDistance: horizontalDist
+            };
+
             if (!blockMap.has(block.name)) {
               blockMap.set(block.name, []);
             }
-            blockMap.get(block.name)!.push(pos);
+            blockMap.get(block.name)!.push(blockInfo);
+
+            // Collect detailed blocks if requested
+            if (includeProperties && detailedBlocks.length < maxBlocks) {
+              detailedBlocks.push(blockInfo);
+            }
           }
         }
 
@@ -740,24 +889,38 @@ function registerObservationTools(server: McpServer, bot: mineflayer.Bot) {
             : `No blocks found at Y level ${yLevel}`);
         }
 
-        let output = `Found ${blockMap.size} different block types:\n\n`;
+        let output = `Found ${blockMap.size} different block types at Y level ${yLevel}:\n\n`;
         
         const sortedEntries = Array.from(blockMap.entries()).sort((a, b) => b[1].length - a[1].length);
         
-        sortedEntries.forEach(([blockType, positions]) => {
-          output += `- ${blockType}: ${positions.length} blocks\n`;
+        sortedEntries.forEach(([blockType, blockInfos]) => {
+          output += `- ${blockType}: ${blockInfos.length} blocks\n`;
           const maxPositions = 3;
-          if (positions.length <= maxPositions) {
-            positions.forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+          if (blockInfos.length <= maxPositions) {
+            blockInfos.forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z}) [dist: ${info.horizontalDistance.toFixed(1)}]\n`;
             });
           } else {
-            positions.slice(0, maxPositions).forEach(pos => {
-              output += `  at (${pos.x}, ${pos.y}, ${pos.z})\n`;
+            blockInfos.slice(0, maxPositions).forEach(info => {
+              output += `  at (${info.position.x}, ${info.position.y}, ${info.position.z}) [dist: ${info.horizontalDistance.toFixed(1)}]\n`;
             });
-            output += `  ... and ${positions.length - maxPositions} more\n`;
+            output += `  ... and ${blockInfos.length - maxPositions} more\n`;
           }
         });
+
+        // Add detailed properties if requested
+        if (includeProperties && detailedBlocks.length > 0) {
+          output += `\n\nDetailed Properties (showing first ${detailedBlocks.length} blocks):\n`;
+          output += '='.repeat(50) + '\n';
+          
+          // Sort by horizontal distance from center
+          detailedBlocks.sort((a, b) => a.horizontalDistance - b.horizontalDistance);
+          
+          detailedBlocks.forEach((blockInfo, index) => {
+            output += `\nBlock ${index + 1} at (${blockInfo.position.x}, ${blockInfo.position.y}, ${blockInfo.position.z}) [distance: ${blockInfo.horizontalDistance.toFixed(1)}]:\n`;
+            output += getBlockProperties(blockInfo.block) + '\n';
+          });
+        }
         
         return createResponse(output);
       } catch (error) {
